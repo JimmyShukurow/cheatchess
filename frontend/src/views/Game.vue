@@ -429,6 +429,7 @@ function playMoveSound(h) {
   if (!h) return
   if (h.check) sounds.check()
   else if (h.capture) sounds.capture()
+  else if (h.san.startsWith('O-O')) sounds.castle()
   else sounds.move()
 }
 

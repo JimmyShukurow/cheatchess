@@ -1,4 +1,5 @@
 import { reactive } from 'vue'
+import { sounds } from './sound.js'
 
 export const state = reactive({
   user: null,
@@ -131,6 +132,7 @@ export function connect() {
         state.outgoing = msg.outgoing || null
         break
       case 'challenge':
+        sounds.notify()
         state.incoming = [...state.incoming.filter((c) => c.id !== msg.challenge.id), msg.challenge]
         break
       case 'challengeSent':

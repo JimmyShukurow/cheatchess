@@ -1,4 +1,5 @@
-// Tiny synthesized sounds (no audio files needed).
+// Game sounds: original synthesized set in /public/sounds (see frontend/sounds-src/generate.py).
+// Decoded once and played through Web Audio, so rapid moves/premoves overlap without lag.
 let ctx = null
 function ac() {
   if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)()
@@ -6,28 +7,51 @@ function ac() {
   return ctx
 }
 
-function knock(freq, dur, gain = 0.5, type = 'triangle') {
+// Browsers only allow audio after a user gesture: unlock on the first click/key.
+if (typeof window !== 'undefined') {
+  const unlock = () => {
+    ac()
+    window.removeEventListener('pointerdown', unlock)
+    window.removeEventListener('keydown', unlock)
+  }
+  window.addEventListener('pointerdown', unlock)
+  window.addEventListener('keydown', unlock)
+}
+
+const NAMES = ['move1', 'move2', 'move3', 'capture', 'castle', 'check', 'start', 'end', 'lowtime', 'notify']
+const buffers = {}
+for (const n of NAMES) {
+  buffers[n] = fetch(`/sounds/${n}.mp3`)
+    .then((r) => r.arrayBuffer())
+    .then((b) => ac().decodeAudioData(b))
+    .catch(() => null)
+}
+
+const VOLUME = 0.9
+
+async function play(name, gain = 1) {
   try {
+    const buffer = await buffers[name]
+    if (!buffer) return
     const c = ac()
-    const t = c.currentTime
-    const o = c.createOscillator()
+    const src = c.createBufferSource()
+    src.buffer = buffer
     const g = c.createGain()
-    o.type = type
-    o.frequency.setValueAtTime(freq, t)
-    o.frequency.exponentialRampToValueAtTime(freq * 0.5, t + dur)
-    g.gain.setValueAtTime(gain, t)
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur)
-    o.connect(g).connect(c.destination)
-    o.start(t)
-    o.stop(t + dur)
+    g.gain.value = gain * VOLUME
+    src.connect(g).connect(c.destination)
+    src.start()
   } catch {}
 }
 
+let lastMove = 0
 export const sounds = {
-  move: () => knock(420, 0.08, 0.6),
-  capture: () => { knock(300, 0.1, 0.7); setTimeout(() => knock(520, 0.06, 0.4), 40) },
-  check: () => { knock(660, 0.12, 0.5, 'square'); },
-  start: () => { knock(520, 0.15, 0.3, 'sine'); setTimeout(() => knock(780, 0.2, 0.3, 'sine'), 120) },
-  end: () => { knock(780, 0.15, 0.3, 'sine'); setTimeout(() => knock(520, 0.25, 0.3, 'sine'), 140) },
-  lowTime: () => knock(880, 0.08, 0.25, 'sine'),
+  // rotate between 3 slightly different clacks so repeated moves sound natural
+  move: () => play(`move${(lastMove = (lastMove % 3) + 1)}`),
+  capture: () => play('capture'),
+  castle: () => play('castle'),
+  check: () => play('check'),
+  start: () => play('start'),
+  end: () => play('end'),
+  lowTime: () => play('lowtime'),
+  notify: () => play('notify'),
 }
