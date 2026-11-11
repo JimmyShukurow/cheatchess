@@ -23,6 +23,7 @@
 
     <!-- highlights -->
     <div v-for="sq in lastMove || []" :key="'lm' + sq" class="hl last" :style="posStyle(sq)" />
+    <div v-for="sq in premove || []" :key="'pm' + sq" class="hl premove" :style="posStyle(sq)" />
     <div v-if="selected" class="hl last" :style="posStyle(selected)" />
     <div v-for="sq in marked" :key="'mk' + sq" class="hl marked" :style="posStyle(sq)" />
     <div v-if="check" class="hl check" :style="posStyle(check)" />
@@ -87,8 +88,10 @@ const props = defineProps({
   pieceSet: { type: String, default: 'cburnett' },
   // [{ from, to, color?, opacity? }]
   arrows: { type: Array, default: () => [] },
+  // queued premove [from, to] (highlighted)
+  premove: { type: Array, default: null },
 })
-const emit = defineEmits(['move'])
+const emit = defineEmits(['move', 'cancel'])
 
 const FILES = 'abcdefgh'
 const boardEl = ref(null)
@@ -248,6 +251,7 @@ function onDown(e) {
     e.preventDefault()
   } else {
     selected.value = null
+    emit('cancel') // click on an empty / enemy square cancels a premove
   }
 }
 
@@ -314,6 +318,11 @@ const promoStyle = computed(() => {
 })
 
 function onRightClick(e) {
+  if (props.premove) {
+    emit('cancel')
+    selected.value = null
+    return
+  }
   const { sq } = pointerSquare(e)
   if (!sq) return
   marked.value = marked.value.includes(sq) ? marked.value.filter((s) => s !== sq) : [...marked.value, sq]
@@ -351,6 +360,7 @@ defineExpose({ clear: () => (selected.value = null) })
 .sq.dark .coord { color: var(--light-sq); }
 
 .hl.last { background: rgba(255, 255, 51, 0.5); }
+.hl.premove { background: rgba(214, 79, 0, 0.55); }
 .hl.marked { background: rgba(235, 97, 80, 0.8); }
 .hl.check { background: radial-gradient(ellipse at center, rgba(255, 0, 0, 1) 0%, rgba(231, 0, 0, 1) 25%, rgba(169, 0, 0, 0) 89%, rgba(158, 0, 0, 0) 100%); }
 .hl.hover { box-shadow: inset 0 0 0 max(3px, .55cqw) rgba(255, 255, 255, 0.65); }

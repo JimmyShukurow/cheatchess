@@ -39,7 +39,26 @@
         </div>
       </div>
 
-      <button v-if="state.seeking" class="btn btn-big seeking" @click="send({ t: 'cancelSeek' })">
+      <div v-if="selectedPlayer && !state.outgoing" class="vs-chip">
+        vs <b>{{ selectedPlayer.username }}</b>
+        <span class="muted">({{ selectedPlayer[catKey(selected)] }})</span>
+        <button class="x" title="Play a random opponent instead" @click="selectedId = null">✕</button>
+      </div>
+
+      <button v-if="state.outgoing" class="btn btn-big seeking" @click="cancelChallenge">
+        <span class="spinner" />
+        <span>
+          <div>Waiting for {{ state.outgoing.to.username }}…</div>
+          <div class="sub">{{ label(state.outgoing.tc) }} · click to cancel</div>
+        </span>
+      </button>
+      <button v-else-if="selectedPlayer" class="btn btn-green btn-big" :disabled="!state.connected || selectedPlayer.status === 'playing'" @click="challenge">
+        <span>
+          <div>Challenge</div>
+          <div class="sub">{{ selectedPlayer.username }} · {{ label(selected) }}</div>
+        </span>
+      </button>
+      <button v-else-if="state.seeking" class="btn btn-big seeking" @click="send({ t: 'cancelSeek' })">
         <span class="spinner" />
         <span>
           <div>Searching {{ label(state.seeking) }}…</div>
@@ -53,21 +72,46 @@
         <span><b>{{ state.online.games }}</b> games in play</span>
       </div>
 
-      <div v-if="games.length" class="recent">
-        <h3>Recent games</h3>
+      <div class="tabs">
+        <button :class="{ on: tab === 'recent' }" @click="tab = 'recent'">Recent games</button>
+        <button :class="{ on: tab === 'players' }" @click="tab = 'players'">
+          Players online <span class="count">{{ others.length }}</span>
+        </button>
+      </div>
+
+      <div v-if="tab === 'recent'" class="recent">
         <router-link v-for="gm in games" :key="gm.id" :to="`/game/${gm.id}`" class="grow">
           <span class="res" :class="resClass(gm)">{{ resIcon(gm) }}</span>
           <span class="opp">vs {{ opponent(gm).username }} <span class="muted">({{ opponent(gm).rating }})</span></span>
           <span class="muted">{{ gm.tc }}</span>
           <span class="muted">{{ Math.ceil(gm.moves.length / 2) }} mv</span>
         </router-link>
+        <div v-if="!games.length" class="muted empty">No games yet – press Play!</div>
+      </div>
+
+      <div v-else class="players">
+        <input v-if="others.length > 8" v-model="filter" class="input search" placeholder="Search player…" />
+        <div
+          v-for="p in filteredPlayers"
+          :key="p.id"
+          class="prow"
+          :class="{ sel: selectedId === p.id, busy: p.status === 'playing' }"
+          :title="p.status === 'playing' ? 'In a game right now' : 'Select, choose a time control above, then Challenge'"
+          @click="togglePlayer(p)"
+        >
+          <span class="pav">{{ p.username[0].toUpperCase() }}</span>
+          <span class="pname">{{ p.username }}</span>
+          <span class="muted">{{ p[catKey(selected)] }}</span>
+          <span class="pstatus" :class="p.status">{{ statusText[p.status] }}</span>
+        </div>
+        <div v-if="!others.length" class="muted empty">Nobody else is online right now.</div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import ChessBoard from '../components/ChessBoard.vue'
 import { state, send, api } from '../store.js'
 
@@ -78,6 +122,31 @@ const categories = [
   { name: 'Rapid', icon: '⏱', key: 'ratingRapid', tcs: ['10+0', '10+5', '15+10', '30+0'] },
 ]
 const selected = ref(localStorage.getItem('tc') || '10+0')
+const tab = ref('recent')
+const filter = ref('')
+const selectedId = ref(null)
+const statusText = { idle: 'online', seeking: 'searching', playing: 'playing' }
+
+const others = computed(() => state.players.filter((p) => p.id !== state.user?.id))
+const filteredPlayers = computed(() => {
+  const f = filter.value.trim().toLowerCase()
+  return f ? others.value.filter((p) => p.username.toLowerCase().includes(f)) : others.value
+})
+const selectedPlayer = computed(() => others.value.find((p) => p.id === selectedId.value) || null)
+const catKey = (tc) => categories.find((c) => c.tcs.includes(tc))?.key || 'ratingRapid'
+
+function togglePlayer(p) {
+  selectedId.value = selectedId.value === p.id ? null : p.id
+}
+function challenge() {
+  localStorage.setItem('tc', selected.value)
+  if (state.seeking) send({ t: 'cancelSeek' })
+  send({ t: 'challenge', to: selectedPlayer.value.id, tc: selected.value })
+}
+function cancelChallenge() {
+  send({ t: 'challengeAnswer', id: state.outgoing.id, accept: false })
+  state.outgoing = null
+}
 const games = ref([])
 
 function label(tc) {
@@ -135,7 +204,25 @@ watch(
 .seeking { gap: 16px; }
 .stats { display: flex; justify-content: center; gap: 18px; font-size: 13px; }
 .stats b { color: var(--text); }
-.recent h3 { font-size: 15px; margin: 6px 0 8px; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid #3c3a37; margin-top: 4px; }
+.tabs button { flex: 1; background: none; border: none; color: var(--muted); font-weight: 700; font-size: 14px; padding: 10px 4px; cursor: pointer; border-bottom: 3px solid transparent; }
+.tabs button.on { color: var(--text); border-bottom-color: var(--green); }
+.count { background: var(--green); color: #fff; border-radius: 10px; padding: 1px 7px; font-size: 12px; margin-left: 4px; }
+.recent, .players { max-height: 300px; overflow-y: auto; }
+.empty { text-align: center; padding: 18px 0; font-size: 14px; }
+.search { margin: 8px 0; padding: 8px 10px; font-size: 14px; }
+.prow { display: grid; grid-template-columns: 28px 1fr auto 74px; gap: 10px; align-items: center; padding: 8px 6px; border-radius: 6px; cursor: pointer; font-size: 14px; border: 2px solid transparent; }
+.prow:hover { background: #2f2d2a; }
+.prow.sel { border-color: var(--green); background: #2f3a28; }
+.prow.busy { opacity: .55; }
+.pav { width: 26px; height: 26px; border-radius: 4px; background: #4b4847; display: grid; place-items: center; font-weight: 800; font-size: 13px; }
+.pname { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pstatus { font-size: 12px; font-weight: 700; text-align: right; }
+.pstatus.idle { color: var(--green); }
+.pstatus.seeking { color: #e5a83b; }
+.pstatus.playing { color: var(--muted); }
+.vs-chip { display: flex; align-items: center; gap: 6px; background: #2f3a28; border: 1px solid var(--green); border-radius: 8px; padding: 8px 12px; font-size: 14px; }
+.vs-chip .x { margin-left: auto; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; }
 .grow { display: grid; grid-template-columns: 24px 1fr auto auto; gap: 10px; align-items: center; padding: 8px 6px; border-radius: 4px; font-size: 14px; }
 .grow:hover { background: #2f2d2a; }
 .res { width: 20px; height: 20px; border-radius: 4px; display: grid; place-items: center; font-weight: 800; font-size: 14px; }

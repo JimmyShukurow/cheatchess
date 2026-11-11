@@ -43,13 +43,17 @@ type Hub struct {
 	games    map[string]*Game   // live + recently finished games
 	active   map[int64]string   // user -> active game id
 	watchers map[string]map[*Client]bool
-	upgrader websocket.Upgrader
+	// online players + direct challenges
+	profiles   map[int64]*User // freshest known profile (ratings) per online user
+	challenges map[string]*Challenge
+	upgrader   websocket.Upgrader
 }
 
 func newHub(app *App) *Hub {
 	h := &Hub{
 		app: app, clients: map[int64]map[*Client]bool{}, seeks: map[string][]int64{}, seekOf: map[int64]string{},
 		games: map[string]*Game{}, active: map[int64]string{}, watchers: map[string]map[*Client]bool{},
+		profiles: map[int64]*User{}, challenges: map[string]*Challenge{},
 	}
 	h.upgrader = websocket.Upgrader{
 		ReadBufferSize: 1024, WriteBufferSize: 4096,
@@ -102,11 +106,14 @@ func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request) {
 		h.clients[u.ID] = map[*Client]bool{}
 	}
 	h.clients[u.ID][c] = true
+	h.profiles[u.ID] = u.Public()
 	activeID := h.active[u.ID]
 	seeking := h.seekOf[u.ID]
+	incoming, outgoing := h.pendingChallengesLocked(u.ID)
 	h.mu.Unlock()
 
 	c.queue(mustJSON(map[string]any{"t": "hello", "user": h.app.withAdmin(u), "activeGame": activeID, "seeking": seeking}))
+	c.queue(mustJSON(map[string]any{"t": "challenges", "incoming": incoming, "outgoing": outgoing}))
 	go c.writePump()
 	go h.broadcastOnline()
 	c.readPump()
@@ -154,6 +161,8 @@ type inMsg struct {
 	Game   string `json:"game"`
 	Move   string `json:"move"`
 	Accept bool   `json:"accept"`
+	To     int64  `json:"to"`
+	ID     string `json:"id"`
 }
 
 func (c *Client) readPump() {
@@ -183,7 +192,9 @@ func (h *Hub) disconnect(c *Client) {
 	delete(h.clients[c.user.ID], c)
 	if len(h.clients[c.user.ID]) == 0 {
 		delete(h.clients, c.user.ID)
+		delete(h.profiles, c.user.ID)
 		h.removeSeekLocked(c.user.ID)
+		h.dropChallengesOfLocked(c.user.ID, "offline")
 	}
 	if c.watching != "" {
 		delete(h.watchers[c.watching], c)
@@ -196,6 +207,7 @@ func (h *Hub) disconnect(c *Client) {
 	c.closed = true
 	close(c.send)
 	c.mu.Unlock()
+	go h.broadcastOnline()
 }
 
 func (h *Hub) handle(c *Client, m inMsg) {
@@ -242,6 +254,10 @@ func (h *Hub) handle(c *Client, m inMsg) {
 		}
 	case "rematch", "rematchDecline":
 		h.rematch(c, m.Game, m.T == "rematch")
+	case "challenge":
+		h.challenge(c, m.To, m.TC)
+	case "challengeAnswer":
+		h.answerChallenge(c, m.ID, m.Accept)
 	case "ping":
 		c.queue([]byte(`{"t":"pong"}`))
 	}
@@ -355,6 +371,8 @@ func (h *Hub) startGame(whiteID, blackID int64, tcStr string) error {
 	}
 	h.removeSeekLocked(a.ID)
 	h.removeSeekLocked(b.ID)
+	h.dropChallengesOfLocked(a.ID, "busy")
+	h.dropChallengesOfLocked(b.ID, "busy")
 	g := newGame(h, id, a, b, tcStr, tc)
 	h.games[id] = g
 	h.active[a.ID] = id
@@ -365,6 +383,7 @@ func (h *Hub) startGame(whiteID, blackID int64, tcStr string) error {
 	msg := mustJSON(map[string]any{"t": "start", "game": g.State()})
 	h.sendUser(a.ID, msg)
 	h.sendUser(b.ID, msg)
+	go h.broadcastOnline()
 	return nil
 }
 
@@ -461,6 +480,7 @@ func (h *Hub) gameEnded(g *Game) {
 		delete(h.active, g.black.ID)
 	}
 	h.mu.Unlock()
+	go h.broadcastOnline()
 	// keep finished game in memory for a bit; afterwards it is served from the DB
 	time.AfterFunc(15*time.Minute, func() {
 		h.mu.Lock()
@@ -490,6 +510,10 @@ func (h *Hub) broadcastGame(id string, white, black int64, st *GameState) {
 func (h *Hub) sendUser(uid int64, msg []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.sendUserLocked(uid, msg)
+}
+
+func (h *Hub) sendUserLocked(uid int64, msg []byte) {
 	for c := range h.clients[uid] {
 		c.queue(msg)
 	}
@@ -498,15 +522,21 @@ func (h *Hub) sendUser(uid int64, msg []byte) {
 func (h *Hub) notifyUserUpdated(ids ...int64) {
 	for _, id := range ids {
 		if u, err := h.app.db.UserByID(id); err == nil {
+			h.mu.Lock()
+			if len(h.clients[id]) > 0 {
+				h.profiles[id] = u.Public()
+			}
+			h.mu.Unlock()
 			h.sendUser(id, mustJSON(map[string]any{"t": "user", "user": h.app.withAdmin(u)}))
 		}
 	}
+	h.broadcastOnline()
 }
 
 func (h *Hub) broadcastOnline() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	msg := mustJSON(map[string]any{"t": "online", "players": len(h.clients), "games": len(h.active) / 2})
+	msg := mustJSON(map[string]any{"t": "online", "players": len(h.clients), "games": len(h.active) / 2, "list": h.onlineListLocked()})
 	for _, cs := range h.clients {
 		for c := range cs {
 			c.queue(msg)

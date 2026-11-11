@@ -8,7 +8,18 @@ export const state = reactive({
   seeking: '',
   activeGame: '',
   autoHint: false, // engine auto-suggest mode (admin)
+  players: [], // online players [{ id, username, ratingBullet, ratingBlitz, ratingRapid, status }]
+  incoming: [], // challenges sent to me
+  outgoing: null, // my pending challenge
+  notice: '', // short message (e.g. "X declined your challenge")
 })
+
+let noticeTimer = null
+export function notify(msg) {
+  state.notice = msg
+  clearTimeout(noticeTimer)
+  noticeTimer = setTimeout(() => (state.notice = ''), 4000)
+}
 
 export async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(path, {
@@ -52,6 +63,8 @@ export async function logout() {
   state.user = null
   state.seeking = ''
   state.activeGame = ''
+  state.incoming = []
+  state.outgoing = null
 }
 
 // ---------------- WebSocket ----------------
@@ -110,12 +123,37 @@ export function connect() {
       case 'start':
         state.seeking = ''
         state.activeGame = msg.game.id
+        state.incoming = []
+        state.outgoing = null
         break
+      case 'challenges':
+        state.incoming = msg.incoming || []
+        state.outgoing = msg.outgoing || null
+        break
+      case 'challenge':
+        state.incoming = [...state.incoming.filter((c) => c.id !== msg.challenge.id), msg.challenge]
+        break
+      case 'challengeSent':
+        state.outgoing = msg.challenge
+        break
+      case 'challengeGone': {
+        state.incoming = state.incoming.filter((c) => c.id !== msg.id)
+        if (state.outgoing?.id === msg.id) {
+          state.outgoing = null
+          const why = { declined: `${msg.by} declined your challenge`, expired: `${msg.by} didn't answer`, offline: `${msg.by} went offline`, busy: `${msg.by} started another game` }
+          if (why[msg.reason]) notify(why[msg.reason])
+        }
+        break
+      }
       case 'game':
         if (msg.game.status === 'ended' && state.activeGame === msg.game.id) state.activeGame = ''
         break
+      case 'error':
+        notify(msg.msg)
+        break
       case 'online':
         state.online = { players: msg.players, games: msg.games }
+        if (msg.list) state.players = msg.list
         break
     }
     listeners.forEach((fn) => fn(msg))

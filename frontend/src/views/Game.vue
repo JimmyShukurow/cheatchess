@@ -14,12 +14,14 @@
         <ChessBoard
           :fen="viewFen"
           :orientation="orientation"
-          :movable="canMove ? myColor : null"
+          :movable="canInteract ? myColor : null"
           :dests="dests"
           :last-move="viewLastMove"
           :check="viewCheck"
           :arrows="hintArrows"
+          :premove="premove ? [premove.from, premove.to] : null"
           @move="onBoardMove"
+          @cancel="premove = null"
         />
         <div v-if="firstMoveBanner" class="first-move">
           {{ firstMoveBanner }}
@@ -122,7 +124,6 @@
         <button v-if="!state.seeking" class="btn btn-green" @click="newGame">New {{ g.tc }}</button>
         <button v-else class="btn" @click="send({ t: 'cancelSeek' })"><span class="spinner" /> cancel</button>
       </div>
-      <div v-if="toast" class="toast">{{ toast }}</div>
     </div>
 
     <!-- game over modal -->
@@ -172,6 +173,7 @@ import ChessBoard from '../components/ChessBoard.vue'
 import PlayerBar from '../components/PlayerBar.vue'
 import { state, send, onMessage, unwatch } from '../store.js'
 import { sounds } from '../sound.js'
+import { premoveDests } from '../premove.js'
 
 const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 const route = useRoute()
@@ -184,7 +186,6 @@ const history = shallowRef([]) // [{ fen, san, from, to, check, capture }]
 const viewPly = ref(null) // null = live
 const flipped = ref(false)
 const showModal = ref(false)
-const toast = ref('')
 const confirmResign = ref(false)
 const movesEl = ref(null)
 
@@ -215,6 +216,9 @@ const topColor = computed(() => (bottomColor.value === 'w' ? 'b' : 'w'))
 const displayPly = computed(() => viewPly.value ?? history.value.length)
 const isLive = computed(() => displayPly.value === history.value.length)
 const canMove = computed(() => g.value && !ended.value && isPlayer.value && isLive.value && turn.value === myColor.value)
+// can touch pieces: on my turn = real moves, otherwise = premoves
+const canInteract = computed(() => g.value && !ended.value && isPlayer.value && isLive.value)
+const premove = ref(null) // { from, to, promotion }
 
 const viewFen = computed(() => (displayPly.value === 0 ? START : history.value[displayPly.value - 1].fen))
 const viewLastMove = computed(() => {
@@ -229,6 +233,7 @@ const viewCheck = computed(() => {
 
 const dests = computed(() => {
   const m = new Map()
+  if (canInteract.value && !canMove.value) return premoveDests(viewFen.value, myColor.value)
   if (!canMove.value) return m
   // eslint-disable-next-line no-unused-expressions
   moves.value.length // dependency
@@ -316,6 +321,7 @@ function stopAuto() {
   state.autoHint = false
   hint.value = null
   requestedPly = -1
+  premove.value = null
   send({ t: 'hintStop' })
 }
 function recalc() {
@@ -468,6 +474,18 @@ function applyState(st) {
     showModal.value = true
     sounds.end()
   }
+  if (st.status === 'ended') premove.value = null
+  else playPremove()
+}
+
+// Execute the queued premove if it is legal in the new position, otherwise drop it.
+function playPremove() {
+  const p = premove.value
+  if (!p || !canMove.value) return
+  premove.value = null
+  const legal = chess.moves({ verbose: true }).find((m) => m.from === p.from && m.to === p.to)
+  if (!legal) return
+  onBoardMove({ from: p.from, to: p.to, promotion: legal.promotion ? p.promotion || 'q' : undefined })
 }
 
 function scrollMoves() {
@@ -478,6 +496,10 @@ function scrollMoves() {
 
 // ---------- actions ----------
 function onBoardMove({ from, to, promotion }) {
+  if (canInteract.value && !canMove.value) {
+    premove.value = { from, to, promotion } // played as soon as the opponent moves
+    return
+  }
   if (!canMove.value) return
   const uci = from + to + (promotion || '')
   let h
@@ -530,7 +552,6 @@ function onKey(e) {
   e.preventDefault()
 }
 
-let toastTimer = null
 const off = onMessage((msg) => {
   if ((msg.t === 'game' || msg.t === 'start') && msg.game.id === gameId.value) {
     if (msg.t === 'start') sounds.start()
@@ -540,10 +561,6 @@ const off = onMessage((msg) => {
     if (!state.autoHint || msg.ply !== history.value.length) return
     if (hint.value && hint.value.ply === msg.ply && msg.attempt < hint.value.attempt) return
     hint.value = msg
-  } else if (msg.t === 'error') {
-    toast.value = msg.msg
-    clearTimeout(toastTimer)
-    toastTimer = setTimeout(() => (toast.value = ''), 3000)
   }
 })
 

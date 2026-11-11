@@ -35,13 +35,45 @@
     <main class="content">
       <router-view />
     </main>
+
+    <!-- incoming challenges + notices (any page) -->
+    <div class="popups">
+      <div v-for="ch in state.incoming" :key="ch.id" class="popup challenge">
+        <div class="ch-head">
+          <div class="avatar sm">{{ ch.from.username[0].toUpperCase() }}</div>
+          <div>
+            <div><b>{{ ch.from.username }}</b> <span class="muted">({{ ch.from.rating }})</span></div>
+            <div class="muted small">challenges you · <b class="tc">{{ tcLabel(ch.tc) }}</b> · {{ secondsLeft(ch) }}s</div>
+          </div>
+        </div>
+        <div class="ch-btns">
+          <button class="btn btn-green" @click="answer(ch, true)">Accept</button>
+          <button class="btn" @click="answer(ch, false)">Decline</button>
+        </div>
+      </div>
+      <div v-if="state.notice" class="popup notice">{{ state.notice }}</div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { state, onMessage, logout } from './store.js'
+import { state, onMessage, logout, send } from './store.js'
+
+const now = ref(Date.now())
+let tick = null
+onMounted(() => (tick = setInterval(() => (now.value = Date.now()), 1000)))
+onUnmounted(() => clearInterval(tick))
+const secondsLeft = (ch) => Math.max(0, Math.round((ch.expires - now.value) / 1000))
+const tcLabel = (tc) => {
+  const [m, i] = tc.split('+')
+  return i === '0' ? `${m} min` : `${m} | ${i}`
+}
+function answer(ch, accept) {
+  send({ t: 'challengeAnswer', id: ch.id, accept })
+  state.incoming = state.incoming.filter((c) => c.id !== ch.id)
+}
 
 const router = useRouter()
 const route = useRoute()
@@ -89,6 +121,15 @@ async function doLogout() {
 .dot.off { background: #c33; }
 .side-btn { margin: 6px 4px; }
 .content { flex: 1; min-width: 0; }
+.popups { position: fixed; right: 16px; bottom: 16px; z-index: 200; display: flex; flex-direction: column; gap: 10px; width: 320px; max-width: calc(100vw - 32px); }
+.popup { background: #3c3a37; border-radius: 10px; padding: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.5); animation: pop .18s ease-out; }
+.popup.notice { background: #1f1e1b; border-left: 4px solid var(--green); font-weight: 600; font-size: 14px; }
+.ch-head { display: flex; gap: 10px; align-items: center; }
+.avatar.sm { width: 36px; height: 36px; font-size: 16px; }
+.tc { color: var(--text); }
+.ch-btns { display: flex; gap: 8px; margin-top: 12px; }
+.ch-btns .btn { flex: 1; padding: 8px; }
+@keyframes pop { from { transform: translateY(10px); opacity: 0; } }
 
 @media (max-width: 800px) {
   .layout { flex-direction: column; }
