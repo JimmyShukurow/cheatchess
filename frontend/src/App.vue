@@ -40,7 +40,7 @@
     </main>
 
     <!-- incoming challenges + notices (any page) -->
-    <div class="popups">
+    <div class="challenges">
       <div v-for="ch in state.incoming" :key="ch.id" class="popup challenge">
         <div class="ch-head">
           <div class="avatar sm">{{ ch.from.username[0].toUpperCase() }}</div>
@@ -54,6 +54,8 @@
           <button class="btn" @click="answer(ch, false)">Decline</button>
         </div>
       </div>
+    </div>
+    <div class="popups">
       <div v-if="state.notice" class="popup notice">{{ state.notice }}</div>
     </div>
   </div>
@@ -127,7 +129,24 @@ async function doLogout() {
 .popups { position: fixed; right: 16px; bottom: 16px; z-index: 200; display: flex; flex-direction: column; gap: 10px; width: 320px; max-width: calc(100vw - 32px); }
 .popup { background: #3c3a37; border-radius: 10px; padding: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.5); animation: pop .18s ease-out; }
 .popup.notice { background: #1f1e1b; border-left: 4px solid var(--green); font-weight: 600; font-size: 14px; }
-.ch-head { display: flex; gap: 10px; align-items: center; }
+.challenges {
+  position: fixed; inset: 0; z-index: 210; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 16px; padding: 16px; pointer-events: none;
+}
+.popup.challenge {
+  pointer-events: auto; width: 420px; max-width: 100%; padding: 22px; font-size: 17px; border-radius: 14px;
+  border: 2px solid var(--green); animation: pop-in .22s ease-out, glow 1.6s ease-in-out infinite;
+}
+.challenge .avatar.sm { width: 48px; height: 48px; font-size: 22px; }
+.challenge .small { font-size: 14px; }
+.challenge .ch-btns { gap: 12px; margin-top: 18px; }
+.challenge .ch-btns .btn { padding: 12px; font-size: 17px; }
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 14px 2px rgba(129, 182, 76, .45), 0 10px 30px rgba(0,0,0,.6); }
+  50% { box-shadow: 0 0 34px 8px rgba(129, 182, 76, .8), 0 10px 30px rgba(0,0,0,.6); }
+}
+@keyframes pop-in { from { transform: scale(.85); opacity: 0; } }
+.ch-head { display: flex; gap: 12px; align-items: center; }
 .avatar.sm { width: 36px; height: 36px; font-size: 16px; }
 .tc { color: var(--text); }
 .ch-btns { display: flex; gap: 8px; margin-top: 12px; }
