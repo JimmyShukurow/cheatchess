@@ -24,6 +24,9 @@
           </div>
         </div>
       </div>
+      <router-link v-if="state.user" to="/settings" class="nav-item">
+        <span class="ico">⚙</span><span class="lbl">Settings</span>
+      </router-link>
       <button v-if="state.user" class="nav-item logout" @click="doLogout">
         <span class="ico">⎋</span><span class="lbl">Log out</span>
       </button>

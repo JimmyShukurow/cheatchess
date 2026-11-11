@@ -144,6 +144,7 @@ func main() {
 	mux.HandleFunc("POST /api/auth/login", app.handleLogin)
 	mux.HandleFunc("POST /api/auth/logout", app.handleLogout)
 	mux.HandleFunc("GET /api/auth/me", app.handleMe)
+	mux.HandleFunc("POST /api/auth/password", app.handleChangePassword)
 	mux.HandleFunc("GET /api/auth/google", app.handleGoogleStart)
 	mux.HandleFunc("GET /api/auth/google/callback", app.handleGoogleCallback)
 	mux.HandleFunc("GET /api/me/games", app.handleMyGames)

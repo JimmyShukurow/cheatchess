@@ -21,6 +21,7 @@ type User struct {
 	RatingBlitz   int    `json:"ratingBlitz"`
 	RatingRapid   int    `json:"ratingRapid"`
 	EmailVerified bool   `json:"emailVerified"`
+	HasPassword   bool   `json:"hasPassword,omitempty"`
 	IsAdmin       bool   `json:"isAdmin,omitempty"`
 }
 
@@ -40,6 +41,7 @@ func (u *User) Public() *User {
 	c := *u
 	c.Email = ""
 	c.IsAdmin = false
+	c.HasPassword = false
 	return &c
 }
 
@@ -111,6 +113,7 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
+	u.HasPassword = u.PasswordHash != ""
 	return u, err
 }
 
@@ -173,6 +176,23 @@ func (db *DB) LinkGoogle(u *User, gid string) error {
 	}
 	_, err := db.Exec(`UPDATE users SET google_id = ?, email_verified = 1 WHERE id = ?`, gid, u.ID)
 	return err
+}
+
+// SetPassword replaces the user's password hash and revokes every session
+// except keepTokenHash (the session that made the change).
+func (db *DB) SetPassword(userID int64, passwordHash, keepTokenHash string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE users SET password_hash = ? WHERE id = ?`, passwordHash, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?`, userID, keepTokenHash); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (db *DB) SetEmailVerified(email string) (int64, error) {

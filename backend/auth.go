@@ -170,6 +170,45 @@ func (a *App) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"user": a.withAdmin(u)})
 }
 
+// handleChangePassword lets a logged-in user change their password. Accounts
+// created via Google have no password yet; they may set one without a current one.
+func (a *App) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	c, err := r.Cookie(sessionCookie)
+	u := a.currentUser(r)
+	if err != nil || u == nil {
+		writeErr(w, 401, "not logged in")
+		return
+	}
+	if !a.limiter.Allow("pw:" + a.clientIP(r)) {
+		writeErr(w, 429, "too many attempts, try again later")
+		return
+	}
+	var req struct{ Current, New string }
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	if u.PasswordHash != "" && bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.Current)) != nil {
+		writeErr(w, 403, "current password is wrong")
+		return
+	}
+	if len(req.New) < 6 || len(req.New) > 72 {
+		writeErr(w, 400, "password must be 6-72 characters")
+		return
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.New), bcrypt.DefaultCost)
+	if err != nil {
+		writeErr(w, 500, "internal error")
+		return
+	}
+	if err := a.db.SetPassword(u.ID, string(hash), hashToken(c.Value)); err != nil {
+		writeErr(w, 500, "internal error")
+		return
+	}
+	u.PasswordHash, u.HasPassword = string(hash), true
+	writeJSON(w, 200, map[string]any{"user": a.withAdmin(u)})
+}
+
 // ---------- Google OAuth ----------
 
 func (a *App) googleConfig() *oauth2.Config {

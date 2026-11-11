@@ -4,6 +4,7 @@ import Home from './views/Home.vue'
 import Login from './views/Login.vue'
 import Register from './views/Register.vue'
 import Game from './views/Game.vue'
+import Settings from './views/Settings.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -12,6 +13,7 @@ export const router = createRouter({
     { path: '/login', component: Login, meta: { guest: true } },
     { path: '/register', component: Register, meta: { guest: true } },
     { path: '/game/:id', component: Game, meta: { auth: true } },
+    { path: '/settings', component: Settings, meta: { auth: true } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })

@@ -58,6 +58,11 @@ export async function register(email, username, password) {
   connect()
 }
 
+export async function changePassword(current, next) {
+  const { user } = await api('/api/auth/password', { method: 'POST', body: { current, new: next } })
+  state.user = user
+}
+
 export async function logout() {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => {})
   disconnect()
