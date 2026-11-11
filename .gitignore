@@ -1,0 +1,75 @@
+# =====================================================================
+# CheatChess – one .gitignore for the whole repo (backend + frontend + deploy)
+# =====================================================================
+
+# ---------- Secrets / env ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+deploy_key
+deploy_key.pub
+
+# ---------- Backend (Go) ----------
+# local binary from `make build`
+/cheatchess
+backend/cheatchess
+# release binary from `make release`
+dist/
+*.exe
+*.test
+*.out
+coverage.*
+go.work
+go.work.sum
+# built frontend (embedded at build time); keep backend/web/.keep
+backend/web/dist/
+
+# SQLite databases + backups
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+backups/
+
+# ---------- Frontend (Vue / Vite / Node) ----------
+node_modules/
+frontend/dist/
+frontend/.vite/
+.vite/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.eslintcache
+*.tsbuildinfo
+
+# ---------- Deploy (Ansible) ----------
+# your VPS address
+deploy/ansible/inventory.ini
+# vault password – NEVER commit
+deploy/ansible/.vault_pass
+# plaintext vault outside group_vars – NEVER commit
+deploy/ansible/vault.yml
+*.retry
+# NOTE: deploy/ansible/group_vars/all/vault.yml is committed ON PURPOSE (it must be encrypted)
+
+# ---------- Logs / temp ----------
+*.log
+logs/
+tmp/
+*.tmp
+*.swp
+*~
+
+# ---------- OS / editors ----------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.code-workspace

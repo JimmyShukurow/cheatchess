@@ -1,0 +1,8 @@
+[Unit]
+Description=CheatChess daily database backup
+
+[Service]
+Type=oneshot
+User={{ app_user }}
+EnvironmentFile={{ env_file }}
+ExecStart=/bin/sh -c '{{ app_dir }}/current/cheatchess backup {{ backup_dir }}/daily-$(date +%%F).db && find {{ backup_dir }} -name "daily-*.db" -mtime +{{ backups_keep }} -delete'

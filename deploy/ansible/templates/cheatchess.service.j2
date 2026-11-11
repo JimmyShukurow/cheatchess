@@ -1,0 +1,32 @@
+[Unit]
+Description=CheatChess server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ app_user }}
+Group={{ app_user }}
+EnvironmentFile={{ env_file }}
+WorkingDirectory={{ data_dir }}
+ExecStart={{ app_dir }}/current/cheatchess
+Restart=always
+RestartSec=2
+TimeoutStopSec=15
+LimitNOFILE=65536
+
+# hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths={{ data_dir }}
+
+[Install]
+WantedBy=multi-user.target

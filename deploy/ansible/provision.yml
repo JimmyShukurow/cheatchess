@@ -1,0 +1,144 @@
+# One-time (idempotent) server setup, no containers:
+# Stockfish + Caddy from apt, a locked-down system user, systemd units, firewall, swap, auto-updates.
+#   ansible-playbook provision.yml
+- name: Provision CheatChess VPS
+  hosts: cheatchess
+  become: true
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+  tasks:
+    - name: Base packages + Stockfish
+      ansible.builtin.apt:
+        name: [ca-certificates, curl, gnupg, debian-keyring, debian-archive-keyring, apt-transport-https,
+               ufw, fail2ban, unattended-upgrades, sqlite3, stockfish]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Enable automatic security updates
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+        mode: "0644"
+
+    # ---------- Caddy (reverse proxy + automatic HTTPS), official apt repo ----------
+    - name: Caddy apt key
+      ansible.builtin.shell: |
+        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+      args:
+        creates: /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+
+    - name: Caddy apt repository
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main"
+        filename: caddy-stable
+        state: present
+
+    - name: Install Caddy
+      ansible.builtin.apt:
+        name: caddy
+        state: present
+        update_cache: true
+
+    - name: Caddy enabled
+      ansible.builtin.service:
+        name: caddy
+        enabled: true
+        state: started
+
+    # ---------- Firewall ----------
+    - name: Allow SSH, HTTP, HTTPS (incl. HTTP/3)
+      community.general.ufw:
+        rule: allow
+        port: "{{ item.port }}"
+        proto: "{{ item.proto }}"
+      loop:
+        - { port: "22", proto: tcp }
+        - { port: "80", proto: tcp }
+        - { port: "443", proto: tcp }
+        - { port: "443", proto: udp }
+
+    - name: Enable firewall (deny incoming by default)
+      community.general.ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+
+    # ---------- Swap (helps small VPSes) ----------
+    - name: Check swap file
+      ansible.builtin.stat:
+        path: /swapfile
+      register: swapfile
+
+    - name: Create swap file
+      ansible.builtin.shell: |
+        fallocate -l {{ swap_size_mb }}M /swapfile
+        chmod 600 /swapfile
+        mkswap /swapfile
+        swapon /swapfile
+      when: not swapfile.stat.exists and swap_size_mb | int > 0
+      changed_when: true
+
+    - name: Swap in fstab
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        line: "/swapfile none swap sw 0 0"
+      when: swap_size_mb | int > 0
+
+    # ---------- App user, directories, systemd ----------
+    - name: System user for the app (no shell, no login)
+      ansible.builtin.user:
+        name: "{{ app_user }}"
+        system: true
+        shell: /usr/sbin/nologin
+        home: "{{ data_dir }}"
+        create_home: false
+
+    - name: Directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.owner }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ app_dir }}", owner: root, mode: "0755" }
+        - { path: "{{ app_dir }}/releases", owner: root, mode: "0755" }
+        - { path: "{{ data_dir }}", owner: "{{ app_user }}", mode: "0750" }
+        - { path: "{{ backup_dir }}", owner: "{{ app_user }}", mode: "0750" }
+        - { path: "{{ env_file | dirname }}", owner: root, mode: "0755" }
+
+    - name: systemd units
+      ansible.builtin.template:
+        src: "templates/{{ item.src }}"
+        dest: "/etc/systemd/system/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { src: cheatchess.service.j2, dest: cheatchess.service }
+        - { src: cheatchess-backup.service.j2, dest: cheatchess-backup.service }
+        - { src: cheatchess-backup.timer, dest: cheatchess-backup.timer }
+      notify: Reload systemd
+
+    - name: CLI wrapper (sudo cheatchess-cli verify-email …)
+      ansible.builtin.template:
+        src: templates/cheatchess-cli.j2
+        dest: /usr/local/bin/cheatchess-cli
+        mode: "0755"
+
+    - name: Apply systemd changes now
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable app service (starts once a release is deployed)
+      ansible.builtin.systemd:
+        name: cheatchess
+        enabled: true
+
+    - name: Enable daily backup timer
+      ansible.builtin.systemd:
+        name: cheatchess-backup.timer
+        enabled: true
+        state: started

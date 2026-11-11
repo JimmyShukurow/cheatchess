@@ -1,0 +1,68 @@
+name: Build & Deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # manual "Run workflow" button
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: backend/go.mod, cache-dependency-path: backend/go.sum }
+      - name: Vet
+        run: go vet ./...
+        working-directory: backend
+      - name: Build static binary (frontend embedded)
+        run: make release GOARCH=${{ vars.VPS_ARCH || 'amd64' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cheatchess
+          path: dist/cheatchess
+          retention-days: 7
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production # optional: add required reviewers in repo settings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: cheatchess, path: dist }
+
+      - name: Install Ansible
+        run: pipx install --include-deps ansible && ansible-galaxy collection install -r deploy/ansible/requirements.yml
+
+      - name: SSH key, known hosts, inventory, vault password
+        working-directory: deploy/ansible
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '[cheatchess]\nchess ansible_host=%s ansible_user=%s\n' "$VPS_HOST" "${VPS_USER:-root}" > inventory.ini
+          printf '%s' "$ANSIBLE_VAULT_PASSWORD" > .vault_pass && chmod 600 .vault_pass
+
+      - name: Deploy
+        working-directory: deploy/ansible
+        run: ansible-playbook deploy.yml -e release=${GITHUB_SHA::12}
+
+      - name: Clean up secrets
+        if: always()
+        working-directory: deploy/ansible
+        run: rm -f .vault_pass inventory.ini ~/.ssh/id_ed25519

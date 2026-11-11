@@ -1,0 +1,10 @@
+#!/bin/sh
+# Run a cheatchess CLI command with the production config, as the app user.
+#   sudo cheatchess-cli verify-email you@example.com
+#   sudo cheatchess-cli backup {{ backup_dir }}/manual.db
+set -e
+set -a
+. {{ env_file }}
+set +a
+cd {{ data_dir }}
+exec runuser -u {{ app_user }} -- {{ app_dir }}/current/cheatchess "$@"

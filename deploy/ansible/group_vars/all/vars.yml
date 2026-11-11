@@ -1,0 +1,28 @@
+# Non-secret settings (committed). Secrets live in vault.yml (encrypted).
+domain: cheatchess.jemsit.net
+base_url: "https://{{ domain }}"
+
+# Layout on the VPS
+app_user: cheatchess
+app_dir: /opt/cheatchess              # releases/<id>/cheatchess + current -> releases/<id>
+data_dir: /var/lib/cheatchess         # SQLite database
+backup_dir: /var/lib/cheatchess/backups
+env_file: /etc/cheatchess/cheatchess.env
+
+# Binary to deploy (built by `make release` or GitHub Actions)
+binary_path: "{{ playbook_dir }}/../../dist/cheatchess"
+release: "{{ lookup('pipe', 'date +%Y%m%d%H%M%S') }}"   # CI passes the git sha
+releases_keep: 5
+backups_keep: 14
+swap_size_mb: 1024
+
+# Rendered into {{ env_file }} (read by systemd)
+app_env:
+  ADDR: "127.0.0.1:8080"              # only Caddy can reach the app
+  DB_PATH: "{{ data_dir }}/cheatchess.db"
+  BASE_URL: "{{ base_url }}"
+  TRUST_PROXY: "1"
+  STOCKFISH_PATH: /usr/games/stockfish
+  ADMIN_EMAILS: "{{ vault_admin_emails | default('') }}"
+  GOOGLE_CLIENT_ID: "{{ vault_google_client_id | default('') }}"
+  GOOGLE_CLIENT_SECRET: "{{ vault_google_client_secret | default('') }}"

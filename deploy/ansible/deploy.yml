@@ -1,0 +1,137 @@
+# Deploy / update the app: copy the binary, switch the `current` symlink, restart systemd.
+#   make release && ansible-playbook deploy.yml            # from your PC
+#   ansible-playbook deploy.yml -e release=<git sha>        # what GitHub Actions does
+#   ansible-playbook rollback.yml -e to=<old id>       # switch back to an older release
+- name: Deploy CheatChess
+  hosts: cheatchess
+  become: true
+  handlers:
+    - name: Restart app
+      ansible.builtin.systemd:
+        name: cheatchess
+        state: restarted
+        daemon_reload: true
+
+    - name: Reload Caddy
+      ansible.builtin.systemd:
+        name: caddy
+        state: reloaded
+
+  tasks:
+    - name: Fix the release id once (vars are evaluated lazily)
+      ansible.builtin.set_fact:
+        release_id: "{{ release }}"
+
+    - name: Binary was built
+      ansible.builtin.stat:
+        path: "{{ binary_path }}"
+      delegate_to: localhost
+      become: false
+      register: bin
+      failed_when: not bin.stat.exists
+
+    # ---------- config ----------
+    - name: Env file from vault (root-only; systemd passes it to the app)
+      ansible.builtin.template:
+        src: templates/cheatchess.env.j2
+        dest: "{{ env_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify: Restart app
+
+    - name: Caddyfile
+      ansible.builtin.template:
+        src: templates/Caddyfile.j2
+        dest: /etc/caddy/Caddyfile
+        mode: "0644"
+        validate: caddy validate --adapter caddyfile --config %s
+      notify: Reload Caddy
+
+    # ---------- backup before switching ----------
+    - name: Current release
+      ansible.builtin.stat:
+        path: "{{ app_dir }}/current"
+      register: current
+
+    - name: Database exists
+      ansible.builtin.stat:
+        path: "{{ data_dir }}/cheatchess.db"
+      register: dbfile
+
+    - name: Back up database before updating
+      ansible.builtin.command: >-
+        /usr/local/bin/cheatchess-cli backup {{ backup_dir }}/predeploy-{{ ansible_date_time.iso8601_basic_short }}.db
+      when: current.stat.exists and dbfile.stat.exists
+      changed_when: true
+
+    # ---------- install release ----------
+    - name: Release directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}/releases/{{ release_id }}"
+        state: directory
+        mode: "0755"
+
+    - name: Upload binary
+      ansible.builtin.copy:
+        src: "{{ binary_path }}"
+        dest: "{{ app_dir }}/releases/{{ release_id }}/cheatchess"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Point `current` at the new release
+      ansible.builtin.file:
+        src: "{{ app_dir }}/releases/{{ release_id }}"
+        dest: "{{ app_dir }}/current"
+        state: link
+        force: true
+      notify: Restart app
+
+    - name: Restart now (if anything changed)
+      ansible.builtin.meta: flush_handlers
+
+    - name: Make sure the service is running
+      ansible.builtin.systemd:
+        name: cheatchess
+        state: started
+
+    - name: Wait for the app to answer
+      ansible.builtin.command: /usr/local/bin/cheatchess-cli health
+      register: health
+      retries: 15
+      delay: 2
+      until: health.rc == 0
+      changed_when: false
+
+    - name: Make sure admin emails are verified (no-op if the account doesn't exist yet)
+      ansible.builtin.command: /usr/local/bin/cheatchess-cli verify-email {{ item }}
+      loop: "{{ (vault_admin_emails | default('')).split(',') | map('trim') | select | list }}"
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    # ---------- cleanup ----------
+    - name: Remove old releases (keep {{ releases_keep }})
+      ansible.builtin.shell: |
+        cd {{ app_dir }}/releases
+        cur=$(basename "$(readlink -f {{ app_dir }}/current)")
+        ls -1t | grep -vx "$cur" | tail -n +{{ releases_keep }} | xargs -r rm -rf --
+      changed_when: false
+
+    - name: Remove old pre-deploy backups (keep {{ backups_keep }})
+      ansible.builtin.shell: >-
+        ls -1t {{ backup_dir }}/predeploy-*.db 2>/dev/null | tail -n +{{ backups_keep | int + 1 }} | xargs -r rm --
+      changed_when: false
+
+    - name: Public HTTPS check
+      ansible.builtin.uri:
+        url: "{{ base_url }}/api/config"
+        status_code: 200
+      delegate_to: localhost
+      become: false
+      register: public
+      retries: 10
+      delay: 3
+      until: public.status == 200

@@ -1,0 +1,36 @@
+# Switch back to an earlier release that is still on the server.
+#   ansible-playbook rollback.yml                 # lists available releases
+#   ansible-playbook rollback.yml -e to=<id>
+- name: Roll back CheatChess
+  hosts: cheatchess
+  become: true
+  tasks:
+    - name: Available releases
+      ansible.builtin.command: ls -1t {{ app_dir }}/releases
+      register: releases
+      changed_when: false
+
+    - name: Show releases
+      ansible.builtin.debug:
+        msg: "{{ releases.stdout_lines }}"
+      when: to is not defined
+
+    - name: Switch and restart
+      when: to is defined
+      block:
+        - name: Release must exist
+          ansible.builtin.assert:
+            that: to in releases.stdout_lines
+            fail_msg: "release {{ to }} not found on the server"
+
+        - name: Point `current` at {{ to }}
+          ansible.builtin.file:
+            src: "{{ app_dir }}/releases/{{ to }}"
+            dest: "{{ app_dir }}/current"
+            state: link
+            force: true
+
+        - name: Restart
+          ansible.builtin.systemd:
+            name: cheatchess
+            state: restarted

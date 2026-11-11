@@ -1,0 +1,9 @@
+# Template for secrets. Create the real (encrypted) file with:
+#   cd deploy/ansible
+#   cp vault.example.yml group_vars/all/vault.yml
+#   ansible-vault encrypt group_vars/all/vault.yml      # uses .vault_pass
+#   ansible-vault edit group_vars/all/vault.yml         # to change values later
+# The encrypted vault.yml is safe to commit; .vault_pass is NOT.
+vault_admin_emails: "you@example.com"
+vault_google_client_id: ""
+vault_google_client_secret: ""
