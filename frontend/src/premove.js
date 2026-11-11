@@ -76,3 +76,42 @@ export function premoveDests(fen, color) {
   }
   return m
 }
+
+// Apply queued premoves to a FEN *visually* (no legality check), so the board shows
+// pieces where they will be and further premoves can be planned from there.
+export function applyPremoves(fen, moves) {
+  if (!moves.length) return fen
+  const board = parseBoard(fen)
+  for (const { from, to, promotion } of moves) {
+    const p = board[from]
+    if (!p) continue
+    delete board[from]
+    board[to] = promotion && p.type === 'p' ? { color: p.color, type: promotion } : p
+    // castling: move the rook too
+    if (p.type === 'k' && from[0] === 'e' && (to[0] === 'g' || to[0] === 'c') && from[1] === to[1]) {
+      const rFrom = (to[0] === 'g' ? 'h' : 'a') + from[1]
+      const rTo = (to[0] === 'g' ? 'f' : 'd') + from[1]
+      if (board[rFrom]?.type === 'r') {
+        board[rTo] = board[rFrom]
+        delete board[rFrom]
+      }
+    }
+  }
+  const rows = []
+  for (let r = 8; r >= 1; r--) {
+    let row = ''
+    let empty = 0
+    for (const f of FILES) {
+      const p = board[f + r]
+      if (!p) {
+        empty++
+        continue
+      }
+      if (empty) row += empty
+      empty = 0
+      row += p.color === 'w' ? p.type.toUpperCase() : p.type
+    }
+    rows.push(row + (empty || ''))
+  }
+  return [rows.join('/'), ...fen.split(' ').slice(1)].join(' ')
+}

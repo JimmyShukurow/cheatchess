@@ -12,17 +12,20 @@
       />
       <div class="board-wrap">
         <ChessBoard
-          :fen="viewFen"
+          :fen="boardFen"
           :orientation="orientation"
           :movable="canInteract ? myColor : null"
           :dests="dests"
           :last-move="viewLastMove"
           :check="viewCheck"
           :arrows="hintArrows"
-          :premove="premove ? [premove.from, premove.to] : null"
+          :premove="premoveSquares"
           @move="onBoardMove"
-          @cancel="premove = null"
+          @cancel="premoves = []"
         />
+        <div v-if="premoves.length" class="pm-badge" title="Right-click the board to cancel">
+          ⏩ {{ premoves.length }} premove{{ premoves.length > 1 ? 's' : '' }} · right-click to cancel
+        </div>
         <div v-if="firstMoveBanner" class="first-move">
           {{ firstMoveBanner }}
         </div>
@@ -173,7 +176,7 @@ import ChessBoard from '../components/ChessBoard.vue'
 import PlayerBar from '../components/PlayerBar.vue'
 import { state, send, onMessage, unwatch } from '../store.js'
 import { sounds } from '../sound.js'
-import { premoveDests } from '../premove.js'
+import { premoveDests, applyPremoves } from '../premove.js'
 
 const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 const route = useRoute()
@@ -218,7 +221,11 @@ const isLive = computed(() => displayPly.value === history.value.length)
 const canMove = computed(() => g.value && !ended.value && isPlayer.value && isLive.value && turn.value === myColor.value)
 // can touch pieces: on my turn = real moves, otherwise = premoves
 const canInteract = computed(() => g.value && !ended.value && isPlayer.value && isLive.value)
-const premove = ref(null) // { from, to, promotion }
+// queued premoves [{ from, to, promotion }], played one per turn as the opponent moves
+const premoves = ref([])
+// what the board shows: the live position with queued premoves applied visually
+const boardFen = computed(() => (isLive.value && premoves.value.length ? applyPremoves(viewFen.value, premoves.value) : viewFen.value))
+const premoveSquares = computed(() => (premoves.value.length ? premoves.value.flatMap((p) => [p.from, p.to]) : null))
 
 const viewFen = computed(() => (displayPly.value === 0 ? START : history.value[displayPly.value - 1].fen))
 const viewLastMove = computed(() => {
@@ -233,7 +240,7 @@ const viewCheck = computed(() => {
 
 const dests = computed(() => {
   const m = new Map()
-  if (canInteract.value && !canMove.value) return premoveDests(viewFen.value, myColor.value)
+  if (canInteract.value && !canMove.value) return premoveDests(boardFen.value, myColor.value)
   if (!canMove.value) return m
   // eslint-disable-next-line no-unused-expressions
   moves.value.length // dependency
@@ -321,7 +328,7 @@ function stopAuto() {
   state.autoHint = false
   hint.value = null
   requestedPly = -1
-  premove.value = null
+  premoves.value = []
   send({ t: 'hintStop' })
 }
 function recalc() {
@@ -474,17 +481,21 @@ function applyState(st) {
     showModal.value = true
     sounds.end()
   }
-  if (st.status === 'ended') premove.value = null
+  if (st.status === 'ended') premoves.value = []
   else playPremove()
 }
 
-// Execute the queued premove if it is legal in the new position, otherwise drop it.
+// My turn: play the first queued premove if it is legal now. If it isn't, the rest of the
+// line no longer makes sense, so the whole queue is dropped (same as chess.com).
 function playPremove() {
-  const p = premove.value
-  if (!p || !canMove.value) return
-  premove.value = null
+  if (!premoves.value.length || !canMove.value) return
+  const [p, ...rest] = premoves.value
   const legal = chess.moves({ verbose: true }).find((m) => m.from === p.from && m.to === p.to)
-  if (!legal) return
+  if (!legal) {
+    premoves.value = []
+    return
+  }
+  premoves.value = rest
   onBoardMove({ from: p.from, to: p.to, promotion: legal.promotion ? p.promotion || 'q' : undefined })
 }
 
@@ -497,7 +508,7 @@ function scrollMoves() {
 // ---------- actions ----------
 function onBoardMove({ from, to, promotion }) {
   if (canInteract.value && !canMove.value) {
-    premove.value = { from, to, promotion } // played as soon as the opponent moves
+    if (premoves.value.length < 100) premoves.value = [...premoves.value, { from, to, promotion }]
     return
   }
   if (!canMove.value) return
@@ -604,6 +615,10 @@ onUnmounted(() => {
 }
 .board-col { width: var(--board); min-width: 280px; }
 .board-wrap { position: relative; }
+.pm-badge {
+  position: absolute; left: 8px; bottom: 8px; z-index: 15; pointer-events: none;
+  background: rgba(214, 79, 0, .92); color: #fff; font-size: 13px; font-weight: 700; padding: 4px 10px; border-radius: 12px;
+}
 .first-move {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 15;
   background: rgba(0,0,0,.78); padding: 10px 16px; border-radius: 8px; font-weight: 600; pointer-events: none; text-align: center;

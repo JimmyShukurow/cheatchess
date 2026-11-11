@@ -55,6 +55,13 @@ jobs:
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # sanity check: the secret must contain a key for VPS_HOST (fingerprints are public, safe to print)
+          echo "Host keys in SSH_KNOWN_HOSTS:"; ssh-keygen -lf ~/.ssh/known_hosts || true
+          if ! ssh-keygen -F "$VPS_HOST" -f ~/.ssh/known_hosts >/dev/null; then
+            echo "::error::SSH_KNOWN_HOSTS has no entry for $VPS_HOST. Set it to the output of: ssh-keyscan $VPS_HOST"
+            echo "Server currently offers:"; ssh-keyscan -T 10 "$VPS_HOST" 2>/dev/null | ssh-keygen -lf - || true
+            exit 1
+          fi
           printf '[cheatchess]\nchess ansible_host=%s ansible_user=%s\n' "$VPS_HOST" "${VPS_USER:-root}" > inventory.ini
           printf '%s' "$ANSIBLE_VAULT_PASSWORD" > .vault_pass && chmod 600 .vault_pass
 
